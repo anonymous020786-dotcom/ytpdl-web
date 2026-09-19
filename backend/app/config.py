@@ -82,3 +82,12 @@ TELEGRAM_LOCAL_MODE: bool = bool(TELEGRAM_LOCAL_API_URL)
 # Hard cap on how much of a chat's history the "cloud" (non-local) API will
 # upload in one go before telling the user to enable the local server instead.
 TELEGRAM_CLOUD_FILE_LIMIT_MB: int = 50
+
+# python-telegram-bot's default upload timeout (media_write_timeout) is only
+# 20s — fine for a small icon, nowhere near enough for a video on a slow or
+# congested link (observed as low as ~75 KB/s in testing, where even a 10MB
+# file needs over 130s). A VPS's path to Telegram's datacenters should be far
+# faster than a home connection, but the cost of setting this too low is a
+# silent-looking TimedOut on an upload that was actually still in progress,
+# so the default here is deliberately generous.
+TELEGRAM_UPLOAD_TIMEOUT_SECONDS: int = int(os.environ.get("TELEGRAM_UPLOAD_TIMEOUT_SECONDS", "600"))
