@@ -63,3 +63,22 @@ def ensure_dirs() -> None:
 # victim's browser if it got hold of one.
 _raw_origins = os.environ.get("CORS_ORIGINS", "*")
 ALLOWED_ORIGINS: list[str] = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
+# -- Telegram bot (backend/app/bot/) -------------------------------------------
+TELEGRAM_BOT_TOKEN: str = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+
+# Point this at a self-hosted Local Bot API Server (https://github.com/tdlib/telegram-bot-api)
+# to lift the standard 50MB file-send limit to 2GB and send files straight off
+# disk with no re-upload. Leave unset to use Telegram's regular cloud Bot API
+# (works anywhere, no extra infra, but finished videos over 50MB can't be sent
+# in-chat — the bot tells the user instead of silently failing).
+TELEGRAM_LOCAL_API_URL: str = os.environ.get("TELEGRAM_LOCAL_API_URL", "")
+
+# Only meaningful together with TELEGRAM_LOCAL_API_URL: the bot and the local
+# server share DOWNLOAD_ROOT on disk, so files are handed over by path
+# (file://...) instead of being read into memory and re-uploaded.
+TELEGRAM_LOCAL_MODE: bool = bool(TELEGRAM_LOCAL_API_URL)
+
+# Hard cap on how much of a chat's history the "cloud" (non-local) API will
+# upload in one go before telling the user to enable the local server instead.
+TELEGRAM_CLOUD_FILE_LIMIT_MB: int = 50
