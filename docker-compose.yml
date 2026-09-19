@@ -1,0 +1,79 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ytpdl
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ytpdl
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql+psycopg://ytpdl:${POSTGRES_PASSWORD}@postgres:5432/ytpdl
+      DOWNLOAD_ROOT: /data/downloads
+      WORK_ROOT: /data/work
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      SIGNUP_INVITE_CODE: ${SIGNUP_INVITE_CODE}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      MAX_CONCURRENT_DOWNLOADS: ${MAX_CONCURRENT_DOWNLOADS:-2}
+    volumes:
+      - downloads:/data/downloads
+      - work:/data/work
+    depends_on:
+      - redis
+      - postgres
+
+  worker:
+    build:
+      context: ./backend
+    command: ["arq", "app.worker.WorkerSettings"]
+    restart: unless-stopped
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql+psycopg://ytpdl:${POSTGRES_PASSWORD}@postgres:5432/ytpdl
+      DOWNLOAD_ROOT: /data/downloads
+      WORK_ROOT: /data/work
+      MAX_CONCURRENT_DOWNLOADS: ${MAX_CONCURRENT_DOWNLOADS:-2}
+      RATE_LIMIT_KIB: ${RATE_LIMIT_KIB:-0}
+    volumes:
+      - downloads:/data/downloads
+      - work:/data/work
+    depends_on:
+      - redis
+      - postgres
+
+  caddy:
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
+    restart: unless-stopped
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
+volumes:
+  redis_data:
+  postgres_data:
+  downloads:
+  work:
+  caddy_data:
+  caddy_config:

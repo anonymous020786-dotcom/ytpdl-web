@@ -1,0 +1,177 @@
+:root {
+  color-scheme: dark;
+  --bg: #14161a;
+  --panel: #1d2026;
+  --border: #2c3038;
+  --text: #e6e6e6;
+  --muted: #8a8f98;
+  --accent: #e51c23;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.app {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+}
+
+header h1 { font-size: 1.4rem; margin-bottom: 20px; }
+
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.account { display: flex; align-items: center; gap: 12px; font-size: 0.85rem; }
+
+.auth-tabs { display: flex; gap: 4px; margin: 16px 0 12px; }
+.auth-tabs button {
+  flex: 1;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.auth-tabs button.active { background: var(--accent); color: white; border-color: var(--accent); }
+
+.auth-form { display: flex; flex-direction: column; gap: 10px; }
+.auth-form input { width: 100%; }
+
+.card, .job-row {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 12px;
+}
+
+.row { display: flex; gap: 8px; }
+
+input[type="text"], input[type="password"], select {
+  background: #10121600;
+  background: #0f1115;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 0.95rem;
+}
+
+.row input[type="text"] { flex: 1; }
+
+button {
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 16px;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+button:disabled { opacity: 0.6; cursor: default; }
+
+.link-btn {
+  background: none;
+  color: var(--muted);
+  padding: 4px 0;
+  text-decoration: underline;
+  font-size: 0.85rem;
+}
+
+.error { color: #ff6b6b; margin: 8px 0; }
+.muted { color: var(--muted); }
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px 16px;
+  margin: 16px 0;
+}
+.settings-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.settings-grid label:has(input[type="checkbox"]) {
+  flex-direction: row;
+  align-items: center;
+  color: var(--text);
+}
+
+.job-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+
+.badge {
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  background: var(--border);
+}
+.badge-running { background: #2196f3; }
+.badge-completed { background: #4caf50; }
+.badge-failed { background: #a20025; }
+.badge-cancelled { background: #647687; }
+.badge-paused { background: #ff9800; }
+
+.job-actions { display: flex; gap: 12px; margin-top: 4px; }
+
+.progress-bar {
+  height: 6px;
+  background: var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+.job-meta {
+  display: flex;
+  gap: 14px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 6px;
+}
+
+.file-list { list-style: none; padding: 0; margin: 10px 0 0; }
+.file-list li { padding: 4px 0; }
+.file-list a, .file-link {
+  color: var(--accent);
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.sub-list { list-style: none; padding: 0; margin: 16px 0 0; display: flex; flex-direction: column; gap: 10px; }
+.sub-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.small { font-size: 0.78rem; }
+
+.gate {
+  max-width: 360px;
+  margin: 15vh auto;
+  text-align: center;
+}
+.gate form { display: flex; gap: 8px; margin-top: 16px; }
+.gate input { flex: 1; }

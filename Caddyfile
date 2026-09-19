@@ -1,0 +1,18 @@
+{$SITE_ADDRESS:localhost} {
+	# Static frontend build, copied in by Dockerfile.caddy.
+	root * /srv
+	encode gzip
+
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+
+	handle /ws {
+		reverse_proxy api:8000
+	}
+
+	handle {
+		try_files {path} /index.html
+		file_server
+	}
+}
