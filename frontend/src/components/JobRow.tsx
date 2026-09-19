@@ -3,31 +3,6 @@ import { api } from "../api";
 import type { JobFile, JobRecord } from "../types";
 
 const ACTIVE_STATES = new Set(["queued", "running", "paused"]);
-const CAN_PICK_SAVE_LOCATION = typeof window !== "undefined" && "showSaveFilePicker" in window;
-
-async function saveAs(jobId: string, name: string): Promise<void> {
-  if (!CAN_PICK_SAVE_LOCATION) {
-    // Firefox/Safari don't expose a save-location picker to web pages — the
-    // browser's own download handling (its configured Downloads folder, or
-    // its own "ask where to save" setting) is the most we can drive here.
-    const a = document.createElement("a");
-    a.href = api.fileUrl(jobId, name);
-    a.download = name;
-    a.click();
-    return;
-  }
-  try {
-    const handle = await window.showSaveFilePicker!({ suggestedName: name });
-    const res = await fetch(api.fileUrl(jobId, name));
-    if (!res.ok || !res.body) throw new Error(`download failed (${res.status})`);
-    const writable = await handle.createWritable();
-    await res.body.pipeTo(writable);
-  } catch (err) {
-    if ((err as DOMException).name !== "AbortError") {
-      alert(`Couldn't save "${name}": ${(err as Error).message}`);
-    }
-  }
-}
 
 interface JobRowProps {
   job: JobRecord;
@@ -86,12 +61,10 @@ export function JobRow({ job, onCancel, onPause, onResume }: JobRowProps) {
         <ul className="file-list">
           {files.map((f) => (
             <li key={f.name}>
-              <button className="file-link" onClick={() => saveAs(job.job_id, f.name)}>
+              <a href={api.fileUrl(job.job_id, f.name)} download={f.name}>
                 {f.name}
-              </button>{" "}
-              <span className="muted">
-                ({(f.size / 1_048_576).toFixed(1)} MiB{CAN_PICK_SAVE_LOCATION ? " — choose location" : ""})
-              </span>
+              </a>{" "}
+              <span className="muted">({(f.size / 1_048_576).toFixed(1)} MiB)</span>
             </li>
           ))}
         </ul>
