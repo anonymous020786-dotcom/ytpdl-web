@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -12,6 +12,7 @@ import {
 
 import { useAuth } from "../auth/AuthContext";
 import { ApiError } from "../api/client";
+import { getApiBaseUrl, setApiBaseUrl } from "../config";
 
 export function LoginScreen() {
   const { login, register } = useAuth();
@@ -21,6 +22,14 @@ export function LoginScreen() {
   const [inviteCode, setInviteCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  const [showServerSettings, setShowServerSettings] = useState(false);
+  const [serverUrl, setServerUrl] = useState("");
+  const [serverSaved, setServerSaved] = useState(false);
+
+  useEffect(() => {
+    getApiBaseUrl().then(setServerUrl);
+  }, []);
 
   async function submit() {
     setBusy(true);
@@ -36,6 +45,12 @@ export function LoginScreen() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function saveServerUrl() {
+    await setApiBaseUrl(serverUrl);
+    setServerSaved(true);
+    setTimeout(() => setServerSaved(false), 1500);
   }
 
   return (
@@ -96,6 +111,34 @@ export function LoginScreen() {
           <Text style={styles.buttonText}>{mode === "login" ? "Log in" : "Create account"}</Text>
         )}
       </Pressable>
+
+      <Pressable style={styles.serverToggle} onPress={() => setShowServerSettings((v) => !v)}>
+        <Text style={styles.serverToggleText}>
+          {showServerSettings ? "Hide" : "Can't connect? Set"} server address
+        </Text>
+      </Pressable>
+
+      {showServerSettings && (
+        <View style={styles.serverBox}>
+          <Text style={styles.serverLabel}>
+            Backend URL — e.g. http://192.168.1.20:8000. A LAN IP changes when your router
+            reassigns it; update it here any time without reinstalling the app.
+          </Text>
+          <TextInput
+            style={styles.input}
+            placeholder="http://192.168.1.20:8000"
+            placeholderTextColor="#8a8f98"
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+            value={serverUrl}
+            onChangeText={setServerUrl}
+          />
+          <Pressable style={styles.serverSaveButton} onPress={saveServerUrl}>
+            <Text style={styles.buttonText}>{serverSaved ? "Saved ✓" : "Save"}</Text>
+          </Pressable>
+        </View>
+      )}
     </KeyboardAvoidingView>
   );
 }
@@ -120,4 +163,9 @@ const styles = StyleSheet.create({
   error: { color: "#ff6b6b", marginBottom: 12 },
   button: { backgroundColor: "#e51c23", borderRadius: 8, padding: 14, alignItems: "center" },
   buttonText: { color: "#fff", fontWeight: "700", fontSize: 16 },
+  serverToggle: { marginTop: 20, alignItems: "center" },
+  serverToggleText: { color: "#8a8f98", fontSize: 12, textDecorationLine: "underline" },
+  serverBox: { marginTop: 14, backgroundColor: "#1d2026", borderRadius: 10, padding: 14 },
+  serverLabel: { color: "#8a8f98", fontSize: 12, marginBottom: 10, lineHeight: 16 },
+  serverSaveButton: { backgroundColor: "#2c3038", borderRadius: 8, padding: 10, alignItems: "center" },
 });

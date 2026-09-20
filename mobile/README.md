@@ -30,6 +30,14 @@ Your phone and dev machine need to be on the same Wi-Fi network, and the
 backend (`api` + `worker` + `redis`, see the repo root README) needs to
 already be running and reachable at that address.
 
+**The API URL doesn't need a rebuild to change.** `EXPO_PUBLIC_API_BASE_URL`
+(here, or in `eas.json`'s `preview.env` for an EAS build) is only the
+*default* baked in at build time — a LAN IP renews on DHCP and goes stale,
+and rebuilding a whole APK just to update one URL is wasteful. The Login
+screen has a "Can't connect? Set server address" link that edits the actual
+value used at runtime (stored in SecureStore), so a stale IP is a 10-second
+fix in the app, not a ~10-minute EAS rebuild.
+
 ## What's built
 
 - Email/password login & registration (same JWT auth as the web app),

@@ -7,7 +7,7 @@
     "preview": {
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "http://10.40.209.41:8000"
+        "EXPO_PUBLIC_API_BASE_URL": "http://10.71.181.41:8000"
       },
       "android": {
         "buildType": "apk"

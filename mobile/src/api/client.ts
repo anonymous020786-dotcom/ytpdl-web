@@ -1,6 +1,6 @@
 import * as SecureStore from "expo-secure-store";
 
-import { API_BASE_URL } from "../config";
+import { getApiBaseUrl } from "../config";
 import type {
   AuthResponse,
   DownloadSettingsInput,
@@ -37,8 +37,8 @@ class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = await getToken();
-  const res = await fetch(`${API_BASE_URL}${path}`, {
+  const [token, baseUrl] = await Promise.all([getToken(), getApiBaseUrl()]);
+  const res = await fetch(`${baseUrl}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -85,10 +85,8 @@ export const api = {
   jobFiles: (jobId: string) => request<JobFile[]>(`/api/jobs/${jobId}/files`),
 
   fileUrl: async (jobId: string, name: string) => {
-    const token = await getToken();
-    return `${API_BASE_URL}/api/jobs/${jobId}/files/${encodeURIComponent(name)}?token=${encodeURIComponent(
-      token ?? ""
-    )}`;
+    const [token, baseUrl] = await Promise.all([getToken(), getApiBaseUrl()]);
+    return `${baseUrl}/api/jobs/${jobId}/files/${encodeURIComponent(name)}?token=${encodeURIComponent(token ?? "")}`;
   },
 
   listSubscriptions: () => request<Subscription[]>("/api/subscriptions"),
