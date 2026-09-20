@@ -14,6 +14,7 @@ logic, callback-based instead of signal-based) and an arq/Redis task queue
 
 ```
 frontend/   React + TypeScript (Vite) — accounts, submit a link, watch jobs progress live
+mobile/     React Native + Expo (iOS/Android) — same accounts/API, native app instead of a browser
 backend/    FastAPI (app/main.py) — REST + WebSocket API, per-user accounts (app/auth.py + app/db.py)
             arq worker (app/worker.py) — runs one DownloadRunner per job, checks subscriptions on a cron
             Telegram bot (app/bot/) — same download engine, chat-based UI instead of a browser
@@ -22,12 +23,15 @@ backend/    FastAPI (app/main.py) — REST + WebSocket API, per-user accounts (a
 Caddy       reverse proxy + static file server + auto-HTTPS (production only)
 ```
 
-The bot is a second *frontend* onto the exact same backend — it enqueues
-onto the same arq queue (`run_download_job` in `worker.py`, unmodified) and
-listens to the same `job-events` Redis channel the web app's WebSocket
-bridge uses. A Telegram user's identity is just their chat id
-(`owner_id = "tg:<chat_id>"`) — no separate login, same as any other
-Telegram bot. See `backend/app/bot/README.md` for bot-specific setup.
+The bot and the mobile app are both second/third *frontends* onto the exact
+same backend — the bot enqueues onto the same arq queue (`run_download_job`
+in `worker.py`, unmodified) and listens to the same `job-events` Redis
+channel the web app's WebSocket bridge uses; the mobile app calls the exact
+same REST + WebSocket endpoints the web frontend does, with the same
+email/password JWT accounts. A Telegram user's identity is just their chat
+id (`owner_id = "tg:<chat_id>"`) — no separate login, same as any other
+Telegram bot. See `backend/app/bot/README.md` and `mobile/README.md` for
+client-specific setup.
 
 Progress flow: a worker thread running yt-dlp calls a plain Python callback
 on every hook → that publishes to a Redis channel (tagged with the owning
