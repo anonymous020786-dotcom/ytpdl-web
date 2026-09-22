@@ -1,14 +1,13 @@
 fastapi>=0.115
-uvicorn[standard]>=0.30
 mangum>=0.17
 arq>=0.26
 redis>=5.0
 yt-dlp>=2024.8
+bgutil-ytdlp-pot-provider>=2.0.0
 mutagen>=1.47
 pydantic>=2.7
 sqlalchemy>=2.0
-psycopg[binary]>=3.1
+pg8000>=1.31
 bcrypt>=4.1
 pyjwt>=2.8
 email-validator>=2.1
-python-telegram-bot>=21.6

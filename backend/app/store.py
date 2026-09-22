@@ -58,6 +58,10 @@ def sync_publish_event(client: sync_redis.Redis, event: dict[str, Any]) -> None:
     client.publish(EVENTS_CHANNEL, json.dumps(event))
 
 
+def sync_save_job_files(client: sync_redis.Redis, job_id: str, files: list[dict[str, Any]]) -> None:
+    client.hset(_job_key(job_id), mapping={"files": json.dumps(files)})
+
+
 def sync_is_cancelled(client: sync_redis.Redis, job_id: str) -> bool:
     return bool(client.exists(_cancel_key(job_id)))
 
@@ -110,6 +114,11 @@ async def list_jobs(client: async_redis.Redis, *, owner_id: str, limit: int = 20
         pipe.hgetall(_job_key(job_id))
     results = await pipe.execute()
     return [r for r in results if r and r.get("owner_id") == owner_id]
+
+
+async def get_job_files(client: async_redis.Redis, job_id: str) -> list[dict[str, Any]]:
+    raw = await client.hget(_job_key(job_id), "files")
+    return json.loads(raw) if raw else []
 
 
 async def request_cancel(client: async_redis.Redis, job_id: str) -> None:

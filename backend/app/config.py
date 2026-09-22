@@ -50,6 +50,51 @@ JOB_TTL_HOURS: int = int(os.environ.get("JOB_TTL_HOURS", "48"))
 # any subscription whose own interval hasn't elapsed yet.
 DEFAULT_SUBSCRIPTION_INTERVAL_MINUTES: int = int(os.environ.get("DEFAULT_SUBSCRIPTION_INTERVAL_MINUTES", "60"))
 
+# -- Serverless (AWS Lambda) deployment -----------------------------------------
+# Set automatically by the Lambda runtime; used to switch off arq/WebSocket
+# machinery that doesn't fit a stateless, per-invocation environment.
+IS_LAMBDA: bool = bool(os.environ.get("AWS_LAMBDA_FUNCTION_NAME", ""))
+
+# When set, finished job files are uploaded to this S3 bucket instead of
+# staying on local disk (Lambda's /tmp isn't shared across functions or
+# invocations), and served back to clients via presigned URLs.
+S3_BUCKET: str = os.environ.get("S3_BUCKET", "")
+AWS_REGION: str = os.environ.get("AWS_REGION", "ap-south-1")
+
+# Name of the separate Lambda function that actually runs yt-dlp/ffmpeg
+# (the API Lambda stays thin and fast; this one gets a long timeout).
+# Invoked asynchronously in place of arq's ``enqueue_job``.
+WORKER_LAMBDA_NAME: str = os.environ.get("WORKER_LAMBDA_NAME", "")
+
+# Base URL of a bgutil-ytdlp-pot-provider instance (see
+# https://github.com/Brainicism/bgutil-ytdlp-pot-provider). YouTube
+# aggressively fingerprints and blocks requests from datacenter IP ranges
+# (AWS/GCP/Azure/Cloudflare all included) with "Sign in to confirm you're
+# not a bot" — this mints PO tokens that make yt-dlp's requests look
+# legitimate even from Lambda. Leave unset to run without it (fine on a
+# residential IP, will hit the bot check from Lambda).
+POT_PROVIDER_BASE_URL: str = os.environ.get("POT_PROVIDER_BASE_URL", "")
+
+
+def pot_extractor_args() -> dict:
+    """Anti-bot-detection opts for yt-dlp, needed when running from a
+    datacenter IP (AWS/GCP/Azure/any VPS — YouTube blocks these regardless
+    of provider): a PO token from the bgutil sidecar, plus quickjs as the JS
+    challenge-solver runtime (deno also works but its binary is ~96MB vs
+    quickjs's ~2MB, which matters for the Lambda layer size budget) and
+    permission to fetch the (small, cached) challenge-solver script.
+    Verified end-to-end against real YouTube videos with this exact
+    combination — no JS runtime, or player clients that skip PO tokens
+    entirely (e.g. mweb), were NOT sufficient on their own.
+    """
+    if not POT_PROVIDER_BASE_URL:
+        return {}
+    return {
+        "extractor_args": {"youtubepot-bgutilhttp": {"base_url": [POT_PROVIDER_BASE_URL]}},
+        "js_runtimes": {"quickjs": {}},
+        "remote_components": ["ejs:github"],
+    }
+
 
 def ensure_dirs() -> None:
     DOWNLOAD_ROOT.mkdir(parents=True, exist_ok=True)

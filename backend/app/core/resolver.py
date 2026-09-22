@@ -94,7 +94,7 @@ def _strip_playlist_context(text: str) -> str:
     return urlunparse(parsed._replace(query=urlencode(query, doseq=True)))
 
 
-def resolve(text: str, *, cookies_from_browser: str = "") -> ResolvedSource:
+def resolve(text: str, *, cookies_from_browser: str = "", extra_opts: dict | None = None) -> ResolvedSource:
     text = text.strip()
     if not text:
         raise ResolveError("empty link")
@@ -115,6 +115,8 @@ def resolve(text: str, *, cookies_from_browser: str = "") -> ResolvedSource:
     }
     if cookies_from_browser:
         opts["cookiesfrombrowser"] = (cookies_from_browser,)
+    if extra_opts:
+        opts.update(extra_opts)
 
     try:
         with YoutubeDL(opts) as ydl:

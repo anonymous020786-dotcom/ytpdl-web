@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 import time
 import uuid
 
@@ -26,9 +27,11 @@ from .config import (
     MAX_CONCURRENT_DOWNLOADS,
     RATE_LIMIT_KIB,
     REDIS_URL,
+    S3_BUCKET,
     WORK_ROOT,
     DOWNLOAD_ROOT,
     ensure_dirs,
+    pot_extractor_args,
 )
 from .core import resolver
 from .core.models import ResolvedSource
@@ -66,10 +69,31 @@ def _run_blocking(job_id: str, source_dict: dict, settings_dict: dict, owner_id:
             is_cancelled=lambda: sync_is_cancelled(client, job_id),
             is_paused=lambda: sync_is_paused(client, job_id),
             rate_limit_kib=RATE_LIMIT_KIB,
+            extra_opts=pot_extractor_args(),
         )
         runner.run()
+        if S3_BUCKET and runner.done_count > 0:
+            _upload_and_clean(client, job_id, owner_id)
     finally:
         client.close()
+
+
+def _upload_and_clean(client, job_id: str, owner_id: str) -> None:
+    """Lambda's local disk isn't shared across functions/invocations, so a
+    completed job's files move to S3 right away and the local copy is
+    dropped. Failure here shouldn't fail the job — it already downloaded
+    successfully — so it's reported as a job-level warning instead."""
+    from . import storage  # local import: boto3 is Lambda-provided, avoid the cost/dependency for non-S3 deployments
+
+    job_dir = DOWNLOAD_ROOT / job_id
+    try:
+        files = storage.upload_job_dir_sync(job_id, job_dir)
+        store.sync_save_job_files(client, job_id, files)
+    except Exception:
+        log.exception("S3 upload failed for job %s", job_id)
+        sync_publish_event(client, {"job_id": job_id, "owner_id": owner_id, "type": "warning", "warning": "files finished but failed to upload to storage"})
+    finally:
+        shutil.rmtree(job_dir, ignore_errors=True)
 
 
 async def check_due_subscriptions(ctx) -> None:
@@ -90,7 +114,9 @@ async def check_due_subscriptions(ctx) -> None:
 async def _check_subscription(ctx, client, sub: Subscription) -> None:
     loop = asyncio.get_running_loop()
     try:
-        source = await loop.run_in_executor(None, resolver.resolve, sub.url)
+        source = await loop.run_in_executor(
+            None, lambda: resolver.resolve(sub.url, extra_opts=pot_extractor_args())
+        )
     except resolver.ResolveError as exc:
         log.warning("subscription check failed for %s: %s", sub.url, exc)
         sub.last_checked = time.time()
@@ -120,14 +146,7 @@ async def _check_subscription(ctx, client, sub: Subscription) -> None:
             kind=source.kind.value,
             total=len(new_videos),
         )
-        await ctx["redis"].enqueue_job(
-            "run_download_job",
-            job_id,
-            job_source.to_dict(),
-            DownloadSettings().to_dict(),
-            sub.owner_id,
-            _job_id=job_id,
-        )
+        await _enqueue_download(ctx, job_id, job_source.to_dict(), DownloadSettings().to_dict(), sub.owner_id)
         log.info("subscription %s: queued %d new video(s) as job %s", sub.id, len(new_videos), job_id)
 
     sub.title = source.title or sub.title
@@ -135,6 +154,18 @@ async def _check_subscription(ctx, client, sub: Subscription) -> None:
     sub.known_ids = ids[:500]
     sub.last_checked = time.time()
     await store.save_subscription(client, sub)
+
+
+async def _enqueue_download(ctx, job_id: str, source_dict: dict, settings_dict: dict, owner_id: str) -> None:
+    """arq (local/VPS worker) has a live redis pool in ``ctx`` that can
+    enqueue a job; the Lambda worker handler calls this with an empty
+    ``ctx`` (it *is* the worker), so it just runs the download inline."""
+    redis_pool = ctx.get("redis") if isinstance(ctx, dict) else None
+    if redis_pool is not None and hasattr(redis_pool, "enqueue_job"):
+        await redis_pool.enqueue_job("run_download_job", job_id, source_dict, settings_dict, owner_id, _job_id=job_id)
+    else:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _run_blocking, job_id, source_dict, settings_dict, owner_id)
 
 
 async def check_one_subscription(ctx, sub_id: str) -> None:

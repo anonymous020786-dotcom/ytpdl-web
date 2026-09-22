@@ -25,18 +25,23 @@ from arq import create_pool
 from arq.connections import RedisSettings
 from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from pydantic import BaseModel, EmailStr
 from starlette.concurrency import run_in_threadpool
 
 from . import auth, store
 from .config import (
     ALLOWED_ORIGINS,
+    AWS_REGION,
     DEFAULT_SUBSCRIPTION_INTERVAL_MINUTES,
     DOWNLOAD_ROOT,
+    IS_LAMBDA,
     REDIS_URL,
+    S3_BUCKET,
     SIGNUP_INVITE_CODE,
+    WORKER_LAMBDA_NAME,
     ensure_dirs,
+    pot_extractor_args,
 )
 from .core import resolver
 from .core.settings import DownloadSettings
@@ -105,15 +110,35 @@ async def on_startup() -> None:
     ensure_dirs()
     init_db()
     app.state.redis = store.async_client()
-    app.state.arq_pool = await create_pool(RedisSettings.from_dsn(REDIS_URL))
-    app.state.bridge_task = asyncio.create_task(_pubsub_bridge())
+    if IS_LAMBDA:
+        # No persistent worker to enqueue to (see _invoke_worker_lambda) and
+        # no long-lived connection for a WebSocket fan-out task to live on
+        # between invocations — clients poll instead (see mobile/web README).
+        app.state.arq_pool = None
+    else:
+        app.state.arq_pool = await create_pool(RedisSettings.from_dsn(REDIS_URL))
+        app.state.bridge_task = asyncio.create_task(_pubsub_bridge())
 
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
-    app.state.bridge_task.cancel()
+    if not IS_LAMBDA:
+        app.state.bridge_task.cancel()
+        await app.state.arq_pool.close()
     await app.state.redis.close()
-    await app.state.arq_pool.close()
+
+
+def _invoke_worker_lambda(action: str, payload: dict) -> None:
+    import json as _json
+
+    import boto3
+
+    client = boto3.client("lambda", region_name=AWS_REGION)
+    client.invoke(
+        FunctionName=WORKER_LAMBDA_NAME,
+        InvocationType="Event",  # async/fire-and-forget — the API Lambda must not block on a download
+        Payload=_json.dumps({"action": action, **payload}).encode(),
+    )
 
 
 # -- schemas --------------------------------------------------------------------
@@ -184,7 +209,10 @@ async def api_me(user: User = Depends(auth.require_user)) -> dict:
 async def api_resolve(body: ResolveRequest, user: User = Depends(auth.require_user)) -> dict:
     try:
         source = await run_in_threadpool(
-            resolver.resolve, body.url, cookies_from_browser=body.cookies_from_browser
+            resolver.resolve,
+            body.url,
+            cookies_from_browser=body.cookies_from_browser,
+            extra_opts=pot_extractor_args(),
         )
     except resolver.ResolveError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -207,9 +235,16 @@ async def api_create_job(body: JobCreateRequest, user: User = Depends(auth.requi
         kind=body.source.get("kind", "video"),
         total=len(body.source.get("videos", [])),
     )
-    await app.state.arq_pool.enqueue_job(
-        "run_download_job", job_id, body.source, settings.to_dict(), user.id, _job_id=job_id
-    )
+    if IS_LAMBDA:
+        await run_in_threadpool(
+            _invoke_worker_lambda,
+            "run_download_job",
+            {"job_id": job_id, "source": body.source, "settings": settings.to_dict(), "owner_id": user.id},
+        )
+    else:
+        await app.state.arq_pool.enqueue_job(
+            "run_download_job", job_id, body.source, settings.to_dict(), user.id, _job_id=job_id
+        )
     return {"job_id": job_id}
 
 
@@ -256,6 +291,9 @@ async def api_resume_job(job_id: str, user: User = Depends(auth.require_user)) -
 @app.get("/api/jobs/{job_id}/files")
 async def api_job_files(job_id: str, user: User = Depends(auth.require_user)) -> list[dict]:
     await _get_owned_job(job_id, user)
+    if S3_BUCKET:
+        files = await store.get_job_files(app.state.redis, job_id)
+        return [{"name": f["name"], "size": f["size"]} for f in files]
     job_dir = DOWNLOAD_ROOT / job_id
     if not job_dir.is_dir():
         return []
@@ -268,8 +306,17 @@ async def api_job_files(job_id: str, user: User = Depends(auth.require_user)) ->
 
 
 @app.get("/api/jobs/{job_id}/files/{file_path:path}")
-async def api_download_file(job_id: str, file_path: str, user: User = Depends(auth.require_user_qs)) -> FileResponse:
+async def api_download_file(job_id: str, file_path: str, user: User = Depends(auth.require_user_qs)) -> Response:
     await _get_owned_job(job_id, user)
+    if S3_BUCKET:
+        files = await store.get_job_files(app.state.redis, job_id)
+        match = next((f for f in files if f["name"] == file_path), None)
+        if match is None:
+            raise HTTPException(status_code=404, detail="file not found")
+        from . import storage
+
+        url = await run_in_threadpool(storage.presigned_url, match["key"], file_path.rsplit("/", 1)[-1])
+        return RedirectResponse(url)
     job_dir = (DOWNLOAD_ROOT / job_id).resolve()
     target = (job_dir / file_path).resolve()
     if job_dir not in target.parents or not target.is_file():
@@ -281,7 +328,7 @@ async def api_download_file(job_id: str, file_path: str, user: User = Depends(au
 @app.post("/api/subscriptions")
 async def api_create_subscription(body: SubscriptionCreateRequest, user: User = Depends(auth.require_user)) -> dict:
     try:
-        source = await run_in_threadpool(resolver.resolve, body.url)
+        source = await run_in_threadpool(resolver.resolve, body.url, extra_opts=pot_extractor_args())
     except resolver.ResolveError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -328,7 +375,10 @@ async def api_delete_subscription(sub_id: str, user: User = Depends(auth.require
 @app.post("/api/subscriptions/{sub_id}/check")
 async def api_check_subscription(sub_id: str, user: User = Depends(auth.require_user)) -> dict:
     await _get_owned_subscription(sub_id, user)
-    await app.state.arq_pool.enqueue_job("check_one_subscription", sub_id)
+    if IS_LAMBDA:
+        await run_in_threadpool(_invoke_worker_lambda, "check_one_subscription", {"sub_id": sub_id})
+    else:
+        await app.state.arq_pool.enqueue_job("check_one_subscription", sub_id)
     return {"ok": True, "queued": True}
 
 

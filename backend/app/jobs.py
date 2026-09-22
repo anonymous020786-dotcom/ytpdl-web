@@ -65,12 +65,14 @@ class DownloadRunner:
         is_paused: IsPausedFn | None = None,
         rate_limit_kib: int = 0,
         cookies_from_browser: str = "",
+        extra_opts: dict | None = None,
     ) -> None:
         self.job_id = job_id
         self.source = source
         self.settings = settings
         self.rate_limit_kib = rate_limit_kib
         self.cookies_from_browser = cookies_from_browser
+        self.extra_opts = extra_opts or {}
         self._publish = publish
         self._is_cancelled = is_cancelled
         self._is_paused = is_paused or (lambda: False)
@@ -179,6 +181,8 @@ class DownloadRunner:
         pps.append({"key": "FFmpegMetadata", "add_metadata": True})
         opts["postprocessors"] = pps
         self._target_is_audio = target_is_audio or s.audio_only
+        if self.extra_opts:
+            opts.update(self.extra_opts)
         return opts
 
     # -- hooks -------------------------------------------------------------
