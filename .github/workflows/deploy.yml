@@ -1,0 +1,77 @@
+name: Deploy
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  id-token: write # required for AWS OIDC — no static credentials stored in this repo
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build Lambda deployment package
+        working-directory: backend
+        run: |
+          rm -rf build_lambda lambda-api.zip
+          mkdir -p build_lambda
+          pip install \
+            --platform manylinux2014_x86_64 --implementation cp --python-version 3.12 \
+            --only-binary=:all: --target build_lambda -r requirements-lambda.txt
+          find build_lambda -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+          rm -rf build_lambda/bin build_lambda/include
+
+          cp -r app build_lambda/app
+          rm -rf build_lambda/app/bot/__pycache__
+          find build_lambda/app -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+
+          mkdir -p build_lambda/app/static/assets
+          cp ../frontend/dist/index.html build_lambda/app/static/index.html
+          cp ../frontend/dist/assets/*.js build_lambda/app/static/assets/
+          cp ../frontend/dist/assets/*.css build_lambda/app/static/assets/
+
+          cd build_lambda
+          python -c "
+          import zipfile, os
+          with zipfile.ZipFile('../lambda-api.zip', 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+              for root, dirs, files in os.walk('.'):
+                  dirs[:] = [d for d in dirs if d != '__pycache__']
+                  for f in files:
+                      full = os.path.join(root, f)
+                      arc = os.path.relpath(full, '.').replace(os.sep, '/')
+                      zf.write(full, arc)
+          "
+          ls -la ../lambda-api.zip
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::284830763402:role/ytpdl-web-github-deploy
+          aws-region: ap-south-1
+
+      - name: Deploy to Lambda
+        working-directory: backend
+        run: |
+          for fn in ytpdl-web-api ytpdl-web-worker ytpdl-web-bot; do
+            aws lambda update-function-code --function-name "$fn" --zip-file fileb://lambda-api.zip
+            aws lambda wait function-updated --function-name "$fn"
+            echo "$fn deployed"
+          done
