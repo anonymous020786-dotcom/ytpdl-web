@@ -394,3 +394,24 @@ async def ws_endpoint(ws: WebSocket, token: str | None = Query(default=None)) ->
             await ws.receive_text()  # client doesn't send anything meaningful; just keep the socket open
     except WebSocketDisconnect:
         manager.disconnect(ws)
+
+
+# -- static frontend (Lambda deployment only) --------------------------------
+# The docker-compose deployment serves the frontend from its own container
+# behind Caddy; there's no separate static-hosting piece in the Lambda
+# architecture, so the built frontend ships inside this same deployment
+# package instead (see backend/app/static/, populated by the deploy script)
+# and everything that isn't /api/* or /ws falls through to it here.
+if IS_LAMBDA:
+    from pathlib import Path
+
+    from fastapi.responses import FileResponse as _FileResponse
+    from fastapi.staticfiles import StaticFiles
+
+    _STATIC_DIR = Path(__file__).parent / "static"
+    if _STATIC_DIR.is_dir():
+        app.mount("/assets", StaticFiles(directory=_STATIC_DIR / "assets"), name="frontend-assets")
+
+        @app.get("/{full_path:path}")
+        async def spa_fallback(full_path: str) -> _FileResponse:
+            return _FileResponse(_STATIC_DIR / "index.html")

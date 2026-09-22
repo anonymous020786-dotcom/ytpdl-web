@@ -7,7 +7,7 @@
     "preview": {
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "http://10.71.181.41:8000"
+        "EXPO_PUBLIC_API_BASE_URL": "https://ytpdl.videodownloaders.cloud"
       },
       "android": {
         "buildType": "apk"
@@ -17,7 +17,10 @@
       }
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://ytpdl.videodownloaders.cloud"
+      }
     }
   },
   "submit": {
