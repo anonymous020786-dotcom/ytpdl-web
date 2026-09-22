@@ -112,6 +112,11 @@ ALLOWED_ORIGINS: list[str] = [o.strip() for o in _raw_origins.split(",") if o.st
 # -- Telegram bot (backend/app/bot/) -------------------------------------------
 TELEGRAM_BOT_TOKEN: str = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 
+# Checked against Telegram's X-Telegram-Bot-Api-Secret-Token header on every
+# webhook call (Lambda deployment only — see app/bot_lambda_handler.py) so a
+# stranger who finds the webhook URL can't feed it fake updates.
+TELEGRAM_WEBHOOK_SECRET: str = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
+
 # Point this at a self-hosted Local Bot API Server (https://github.com/tdlib/telegram-bot-api)
 # to lift the standard 50MB file-send limit to 2GB and send files straight off
 # disk with no re-upload. Leave unset to use Telegram's regular cloud Bot API

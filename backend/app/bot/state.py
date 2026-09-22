@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 
+import redis as sync_redis
 import redis.asyncio as async_redis
 
 from ..config import REDIS_URL
@@ -55,6 +56,18 @@ async def save_job_message(r: async_redis.Redis, job_id: str, *, chat_id: int, m
 
 async def get_job_message(r: async_redis.Redis, job_id: str) -> tuple[int, int] | None:
     data = await r.hgetall(_msg_key(job_id))
+    if not data:
+        return None
+    return int(data["chat_id"]), int(data["message_id"])
+
+
+# -- sync (used by worker.py, which runs in a plain thread, not an event loop) --
+def sync_client() -> sync_redis.Redis:
+    return sync_redis.Redis.from_url(REDIS_URL, decode_responses=True)
+
+
+def sync_get_job_message(r: sync_redis.Redis, job_id: str) -> tuple[int, int] | None:
+    data = r.hgetall(_msg_key(job_id))
     if not data:
         return None
     return int(data["chat_id"]), int(data["message_id"])

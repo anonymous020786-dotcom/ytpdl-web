@@ -24,6 +24,7 @@ from arq.connections import RedisSettings
 from . import store
 from .config import (
     DEFAULT_SUBSCRIPTION_INTERVAL_MINUTES,
+    IS_LAMBDA,
     MAX_CONCURRENT_DOWNLOADS,
     RATE_LIMIT_KIB,
     REDIS_URL,
@@ -51,10 +52,24 @@ async def run_download_job(ctx, job_id: str, source_dict: dict, settings_dict: d
 def _run_blocking(job_id: str, source_dict: dict, settings_dict: dict, owner_id: str) -> None:
     client = sync_client()
 
+    # In the Lambda deployment there's no persistent progress.py listener
+    # process to relay job-events to Telegram — this worker invocation
+    # already runs synchronously for the job's whole duration, so it relays
+    # its own job's events directly instead (see bot/relay.py).
+    tg_relay = None
+    if IS_LAMBDA:
+        from .bot.relay import TelegramRelay, owner_chat_id
+
+        chat_id = owner_chat_id(owner_id)
+        if chat_id is not None:
+            tg_relay = TelegramRelay(job_id, chat_id)
+
     def publish(event: dict) -> None:
         # owner_id rides along on every event so the API process's pub/sub
         # bridge can route it to only that user's WebSocket connections.
         sync_publish_event(client, {**event, "owner_id": owner_id})
+        if tg_relay is not None:
+            tg_relay.on_event(event)
 
     try:
         source = ResolvedSource.from_dict(source_dict)
@@ -73,12 +88,12 @@ def _run_blocking(job_id: str, source_dict: dict, settings_dict: dict, owner_id:
         )
         runner.run()
         if S3_BUCKET and runner.done_count > 0:
-            _upload_and_clean(client, job_id, owner_id)
+            _upload_and_clean(client, job_id, owner_id, tg_relay)
     finally:
         client.close()
 
 
-def _upload_and_clean(client, job_id: str, owner_id: str) -> None:
+def _upload_and_clean(client, job_id: str, owner_id: str, tg_relay=None) -> None:
     """Lambda's local disk isn't shared across functions/invocations, so a
     completed job's files move to S3 right away and the local copy is
     dropped. Failure here shouldn't fail the job — it already downloaded
@@ -89,6 +104,8 @@ def _upload_and_clean(client, job_id: str, owner_id: str) -> None:
     try:
         files = storage.upload_job_dir_sync(job_id, job_dir)
         store.sync_save_job_files(client, job_id, files)
+        if tg_relay is not None:
+            tg_relay.deliver(files, storage.presigned_url)
     except Exception:
         log.exception("S3 upload failed for job %s", job_id)
         sync_publish_event(client, {"job_id": job_id, "owner_id": owner_id, "type": "warning", "warning": "files finished but failed to upload to storage"})
