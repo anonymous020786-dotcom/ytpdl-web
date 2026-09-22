@@ -35,6 +35,7 @@ from .config import (
     AWS_REGION,
     DEFAULT_SUBSCRIPTION_INTERVAL_MINUTES,
     DOWNLOAD_ROOT,
+    EDGE_SECRET,
     IS_LAMBDA,
     REDIS_URL,
     S3_BUCKET,
@@ -57,6 +58,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def _require_edge_secret(request, call_next):
+    # 404, not 403 — a prober hitting the raw API Gateway/Function URL
+    # directly sees "nothing here" rather than confirmation this is a
+    # gated backend. Only the Cloudflare Worker knows EDGE_SECRET.
+    if IS_LAMBDA and EDGE_SECRET and request.headers.get("x-edge-secret") != EDGE_SECRET:
+        from fastapi.responses import Response
+
+        return Response(status_code=404)
+    return await call_next(request)
 
 
 # -- websocket fan-out, scoped per owner ---------------------------------------

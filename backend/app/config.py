@@ -75,6 +75,13 @@ WORKER_LAMBDA_NAME: str = os.environ.get("WORKER_LAMBDA_NAME", "")
 # residential IP, will hit the bot check from Lambda).
 POT_PROVIDER_BASE_URL: str = os.environ.get("POT_PROVIDER_BASE_URL", "")
 
+# When set, every request must carry this exact value in X-Edge-Secret or the
+# API Lambda rejects it with 404 — closes off the raw API Gateway URL (and
+# the old Function URL) as a way to reach the backend directly, bypassing
+# Cloudflare. Only the Worker at ytpdl.videodownloaders.cloud knows this
+# value and adds the header itself; real clients never see or send it.
+EDGE_SECRET: str = os.environ.get("EDGE_SECRET", "")
+
 
 def pot_extractor_args() -> dict:
     """Anti-bot-detection opts for yt-dlp, needed when running from a
