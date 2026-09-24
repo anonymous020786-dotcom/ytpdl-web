@@ -94,13 +94,47 @@ def pot_extractor_args() -> dict:
     combination — no JS runtime, or player clients that skip PO tokens
     entirely (e.g. mweb), were NOT sufficient on their own.
     """
-    if not POT_PROVIDER_BASE_URL:
-        return {}
-    return {
-        "extractor_args": {"youtubepot-bgutilhttp": {"base_url": [POT_PROVIDER_BASE_URL]}},
-        "js_runtimes": {"quickjs": {}},
-        "remote_components": ["ejs:github"],
-    }
+    opts: dict = {}
+    if POT_PROVIDER_BASE_URL:
+        opts = {
+            "extractor_args": {"youtubepot-bgutilhttp": {"base_url": [POT_PROVIDER_BASE_URL]}},
+            "js_runtimes": {"quickjs": {}},
+            "remote_components": ["ejs:github"],
+        }
+    cookies = _youtube_cookie_file()
+    if cookies:
+        opts["cookiefile"] = cookies
+    return opts
+
+
+# Real logged-in YouTube session cookies (Netscape cookies.txt), kept in the
+# private S3 bucket rather than an env var (too big for Lambda's 4KB env limit,
+# and they're a credential). PO tokens alone lost ground to YouTube's
+# bot-detection; a genuine account session is the durable fix. yt-dlp rewrites
+# the cookie file as it runs, so it's copied to writable /tmp per container.
+YOUTUBE_COOKIES_S3_KEY: str = os.environ.get("YOUTUBE_COOKIES_S3_KEY", "secrets/youtube-cookies.txt")
+_COOKIE_PATH = "/tmp/yt-cookies.txt"
+_cookie_checked_at = 0.0
+
+
+def _youtube_cookie_file() -> str | None:
+    global _cookie_checked_at
+    if not (IS_LAMBDA and S3_BUCKET):
+        return None
+    if os.path.exists(_COOKIE_PATH):
+        return _COOKIE_PATH
+    import time
+
+    if time.time() - _cookie_checked_at < 60:  # don't hit S3 on every call when none is uploaded
+        return None
+    _cookie_checked_at = time.time()
+    try:
+        import boto3
+
+        boto3.client("s3", region_name=AWS_REGION).download_file(S3_BUCKET, YOUTUBE_COOKIES_S3_KEY, _COOKIE_PATH)
+    except Exception:
+        return None
+    return _COOKIE_PATH
 
 
 def ensure_dirs() -> None:
