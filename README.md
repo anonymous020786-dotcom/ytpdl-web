@@ -57,6 +57,14 @@ The server copy under `data/downloads/` stays put after that — nothing
 deletes it automatically yet (see the `JOB_TTL_HOURS` note in `config.py`;
 it's currently metadata-only, not enforced by a cleanup job).
 
+## Installing on a phone without an app store
+
+The web frontend is an installable web app (`frontend/public/manifest.webmanifest`
++ Apple touch icon), so it works on iPhone without an Apple Developer account:
+open the site in **Safari → Share → Add to Home Screen**. It gets its own icon
+and launches full-screen. On Android, use Chrome's **Install app** menu item,
+or install the APK built from `mobile/` (see `mobile/README.md`).
+
 ## Running locally (no Docker)
 
 Backend:

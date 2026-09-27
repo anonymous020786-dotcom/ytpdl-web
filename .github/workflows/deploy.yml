@@ -44,10 +44,8 @@ jobs:
           rm -rf build_lambda/app/bot/__pycache__
           find build_lambda/app -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
-          mkdir -p build_lambda/app/static/assets
-          cp ../frontend/dist/index.html build_lambda/app/static/index.html
-          cp ../frontend/dist/assets/*.js build_lambda/app/static/assets/
-          cp ../frontend/dist/assets/*.css build_lambda/app/static/assets/
+          mkdir -p build_lambda/app/static
+          cp -r ../frontend/dist/. build_lambda/app/static/
 
           cd build_lambda
           python -c "

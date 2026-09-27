@@ -20,7 +20,7 @@ body {
 .app {
   max-width: 780px;
   margin: 0 auto;
-  padding: 24px 16px 64px;
+  padding: 24px max(16px, env(safe-area-inset-right)) 64px max(16px, env(safe-area-inset-left));
 }
 
 header h1 { font-size: 1.4rem; margin-bottom: 20px; }

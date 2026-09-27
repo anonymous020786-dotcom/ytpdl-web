@@ -378,4 +378,9 @@ if IS_LAMBDA:
 
         @app.get("/{full_path:path}")
         async def spa_fallback(full_path: str) -> _FileResponse:
+            # Top-level public files (manifest, icons) are served as-is;
+            # everything else falls through to the SPA.
+            candidate = (_STATIC_DIR / full_path).resolve()
+            if full_path and candidate.parent == _STATIC_DIR.resolve() and candidate.is_file():
+                return _FileResponse(candidate)
             return _FileResponse(_STATIC_DIR / "index.html")
