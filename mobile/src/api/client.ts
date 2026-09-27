@@ -1,32 +1,11 @@
-import * as SecureStore from "expo-secure-store";
-
 import { getApiBaseUrl } from "../config";
 import type {
-  AuthResponse,
   DownloadSettingsInput,
   JobFile,
   JobRecord,
   ResolvedSource,
   Subscription,
-  User,
 } from "./types";
-
-const TOKEN_KEY = "ytpdl_token";
-
-// SecureStore (Keychain on iOS, Keystore on Android) instead of localStorage
-// — there's no browser storage on a phone, and this is the appropriate place
-// for a bearer token on-device.
-export async function getToken(): Promise<string | null> {
-  return SecureStore.getItemAsync(TOKEN_KEY);
-}
-
-export async function setToken(token: string): Promise<void> {
-  await SecureStore.setItemAsync(TOKEN_KEY, token);
-}
-
-export async function clearToken(): Promise<void> {
-  await SecureStore.deleteItemAsync(TOKEN_KEY);
-}
 
 class ApiError extends Error {
   status: number;
@@ -37,12 +16,11 @@ class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const [token, baseUrl] = await Promise.all([getToken(), getApiBaseUrl()]);
+  const baseUrl = await getApiBaseUrl();
   const res = await fetch(`${baseUrl}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(init?.headers ?? {}),
     },
   });
@@ -56,17 +34,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export { ApiError };
 
 export const api = {
-  register: (email: string, password: string, inviteCode: string) =>
-    request<AuthResponse>("/api/auth/register", {
-      method: "POST",
-      body: JSON.stringify({ email, password, invite_code: inviteCode }),
-    }),
-
-  login: (email: string, password: string) =>
-    request<AuthResponse>("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
-
-  me: () => request<User>("/api/auth/me"),
-
   resolve: (url: string) =>
     request<ResolvedSource>("/api/resolve", { method: "POST", body: JSON.stringify({ url }) }),
 
@@ -85,8 +52,8 @@ export const api = {
   jobFiles: (jobId: string) => request<JobFile[]>(`/api/jobs/${jobId}/files`),
 
   fileUrl: async (jobId: string, name: string) => {
-    const [token, baseUrl] = await Promise.all([getToken(), getApiBaseUrl()]);
-    return `${baseUrl}/api/jobs/${jobId}/files/${encodeURIComponent(name)}?token=${encodeURIComponent(token ?? "")}`;
+    const baseUrl = await getApiBaseUrl();
+    return `${baseUrl}/api/jobs/${jobId}/files/${encodeURIComponent(name)}`;
   },
 
   listSubscriptions: () => request<Subscription[]>("/api/subscriptions"),

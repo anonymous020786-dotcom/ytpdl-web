@@ -1,25 +1,10 @@
-import type { AuthResponse, DownloadSettingsInput, JobFile, JobRecord, ResolvedSource, Subscription, User } from "./types";
-
-const TOKEN_KEY = "ytpdl_token";
-
-export function getToken(): string {
-  return localStorage.getItem(TOKEN_KEY) ?? "";
-}
-
-export function setToken(token: string): void {
-  localStorage.setItem(TOKEN_KEY, token);
-}
-
-export function clearToken(): void {
-  localStorage.removeItem(TOKEN_KEY);
-}
+import type { DownloadSettingsInput, JobFile, JobRecord, ResolvedSource, Subscription } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
     headers: {
       "Content-Type": "application/json",
-      ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
       ...(init?.headers ?? {}),
     },
   });
@@ -31,17 +16,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  register: (email: string, password: string, inviteCode: string) =>
-    request<AuthResponse>("/api/auth/register", {
-      method: "POST",
-      body: JSON.stringify({ email, password, invite_code: inviteCode }),
-    }),
-
-  login: (email: string, password: string) =>
-    request<AuthResponse>("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
-
-  me: () => request<User>("/api/auth/me"),
-
   resolve: (url: string, cookiesFromBrowser = "") =>
     request<ResolvedSource>("/api/resolve", {
       method: "POST",
@@ -79,11 +53,10 @@ export const api = {
     request<{ ok: boolean; queued: boolean }>(`/api/subscriptions/${subId}/check`, { method: "POST" }),
 
   fileUrl: (jobId: string, name: string) =>
-    `/api/jobs/${jobId}/files/${encodeURIComponent(name)}?token=${encodeURIComponent(getToken())}`,
+    `/api/jobs/${jobId}/files/${encodeURIComponent(name)}`,
 
   wsUrl: () => {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
-    const q = getToken() ? `?token=${encodeURIComponent(getToken())}` : "";
-    return `${proto}//${location.host}/ws${q}`;
+    return `${proto}//${location.host}/ws`;
   },
 };

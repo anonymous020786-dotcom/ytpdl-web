@@ -66,13 +66,3 @@ export interface Subscription {
   new_count: number;
   known_ids: string[];
 }
-
-export interface User {
-  id: string;
-  email: string;
-}
-
-export interface AuthResponse {
-  token: string;
-  user: User;
-}

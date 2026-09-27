@@ -25,25 +25,6 @@ body {
 
 header h1 { font-size: 1.4rem; margin-bottom: 20px; }
 
-.app-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-}
-.account { display: flex; align-items: center; gap: 12px; font-size: 0.85rem; }
-
-.auth-tabs { display: flex; gap: 4px; margin: 16px 0 12px; }
-.auth-tabs button {
-  flex: 1;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  color: var(--muted);
-}
-.auth-tabs button.active { background: var(--accent); color: white; border-color: var(--accent); }
-
-.auth-form { display: flex; flex-direction: column; gap: 10px; }
-.auth-form input { width: 100%; }
-
 .card, .job-row {
   background: var(--panel);
   border: 1px solid var(--border);

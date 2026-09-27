@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
 
-import { getToken } from "../api/client";
 import { getWsBaseUrl } from "../config";
 
 export interface JobEvent {
@@ -28,10 +27,9 @@ export function useJobEvents(onEvent: (event: JobEvent) => void, enabled: boolea
     let cancelled = false;
 
     (async () => {
-      const [token, wsBaseUrl] = await Promise.all([getToken(), getWsBaseUrl()]);
+      const wsBaseUrl = await getWsBaseUrl();
       if (cancelled) return;
-      const url = `${wsBaseUrl}/ws${token ? `?token=${encodeURIComponent(token)}` : ""}`;
-      ws = new WebSocket(url);
+      ws = new WebSocket(`${wsBaseUrl}/ws`);
       ws.onmessage = (ev) => {
         try {
           onEventRef.current(JSON.parse(ev.data));
