@@ -2,7 +2,6 @@
 __pycache__/
 *.pyc
 backend/.venv/
-backend/ytpdl.db
 backend/build_lambda/
 backend/lambda-api.zip
 frontend/node_modules/

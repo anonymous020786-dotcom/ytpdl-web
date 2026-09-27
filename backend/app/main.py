@@ -1,14 +1,10 @@
-"""FastAPI app: user accounts, link resolution, download jobs on arq/Redis,
-subscriptions, and live progress fanned out to WebSocket clients.
+"""FastAPI app: link resolution, download jobs on arq/Redis, subscriptions,
+and live progress fanned out to WebSocket clients.
 
-Auth is real per-user accounts (email + password -> JWT), stored in
-``db.py``/SQLite-or-Postgres — not a single shared secret. Every job and
-subscription is owned by whoever created it; listings, cancel/pause/resume,
-and file downloads all check ownership. Registration can be gated behind
-``SIGNUP_INVITE_CODE`` (see config.py) so this doesn't become an open public
-YouTube downloader the moment it's reachable from the internet — YouTube's
-ToS prohibits that use, and an open instance spends your VPS's disk and
-bandwidth on anyone who finds the URL.
+There are no accounts: every job and subscription created through this API
+(web frontend or mobile app) belongs to the single ``WEB_OWNER_ID``. The
+Telegram bot keeps its own per-chat ``tg:<chat_id>`` owners, so bot jobs
+don't show up in the web UI and vice versa.
 """
 
 from __future__ import annotations
@@ -23,13 +19,13 @@ from typing import Any
 
 from arq import create_pool
 from arq.connections import RedisSettings
-from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse, Response
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from . import auth, store
+from . import store
 from .config import (
     ALLOWED_ORIGINS,
     AWS_REGION,
@@ -39,7 +35,6 @@ from .config import (
     IS_LAMBDA,
     REDIS_URL,
     S3_BUCKET,
-    SIGNUP_INVITE_CODE,
     WORKER_LAMBDA_NAME,
     ensure_dirs,
     pot_extractor_args,
@@ -47,9 +42,11 @@ from .config import (
 from .core import resolver
 from .core.settings import DownloadSettings
 from .core.subscriptions import Subscription
-from .db import User, init_db
 
 log = logging.getLogger("ytpdl.api")
+
+# Owner id for everything created via this API — see module docstring.
+WEB_OWNER_ID = "web"
 
 app = FastAPI(title="YT Playlist Downloader API")
 app.add_middleware(
@@ -102,7 +99,7 @@ manager = ConnectionManager()
 
 async def _pubsub_bridge() -> None:
     """Subscribe to Redis job-events and forward each message to the owning
-    user's WebSocket connection(s) only."""
+    owner's WebSocket connection(s) only."""
     client = store.async_client()
     pubsub = client.pubsub()
     await pubsub.subscribe(store.EVENTS_CHANNEL)
@@ -121,7 +118,6 @@ async def _pubsub_bridge() -> None:
 @app.on_event("startup")
 async def on_startup() -> None:
     ensure_dirs()
-    init_db()
     app.state.redis = store.async_client()
     if IS_LAMBDA:
         # No persistent worker to enqueue to (see _invoke_worker_lambda) and
@@ -155,17 +151,6 @@ def _invoke_worker_lambda(action: str, payload: dict) -> None:
 
 
 # -- schemas --------------------------------------------------------------------
-class RegisterRequest(BaseModel):
-    email: EmailStr
-    password: str
-    invite_code: str = ""
-
-
-class LoginRequest(BaseModel):
-    email: EmailStr
-    password: str
-
-
 class ResolveRequest(BaseModel):
     url: str
     cookies_from_browser: str = ""
@@ -181,45 +166,15 @@ class SubscriptionCreateRequest(BaseModel):
     interval_minutes: int = DEFAULT_SUBSCRIPTION_INTERVAL_MINUTES
 
 
-def _user_out(user: User) -> dict:
-    return {"id": user.id, "email": user.email}
-
-
-# -- auth routes ----------------------------------------------------------------
+# -- health ---------------------------------------------------------------------
 @app.get("/api/health")
 async def health() -> dict:
     return {"status": "ok"}
 
 
-@app.post("/api/auth/register")
-async def api_register(body: RegisterRequest) -> dict:
-    if SIGNUP_INVITE_CODE and body.invite_code != SIGNUP_INVITE_CODE:
-        raise HTTPException(status_code=403, detail="invalid invite code")
-    if len(body.password) < 8:
-        raise HTTPException(status_code=422, detail="password must be at least 8 characters")
-    try:
-        user = await run_in_threadpool(auth.register_user, body.email, body.password)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return {"token": auth.create_token(user.id), "user": _user_out(user)}
-
-
-@app.post("/api/auth/login")
-async def api_login(body: LoginRequest) -> dict:
-    user = await run_in_threadpool(auth.authenticate_user, body.email, body.password)
-    if user is None:
-        raise HTTPException(status_code=401, detail="invalid email or password")
-    return {"token": auth.create_token(user.id), "user": _user_out(user)}
-
-
-@app.get("/api/auth/me")
-async def api_me(user: User = Depends(auth.require_user)) -> dict:
-    return _user_out(user)
-
-
 # -- resolve / jobs ---------------------------------------------------------
 @app.post("/api/resolve")
-async def api_resolve(body: ResolveRequest, user: User = Depends(auth.require_user)) -> dict:
+async def api_resolve(body: ResolveRequest) -> dict:
     try:
         source = await run_in_threadpool(
             resolver.resolve,
@@ -233,7 +188,7 @@ async def api_resolve(body: ResolveRequest, user: User = Depends(auth.require_us
 
 
 @app.post("/api/jobs")
-async def api_create_job(body: JobCreateRequest, user: User = Depends(auth.require_user)) -> dict:
+async def api_create_job(body: JobCreateRequest) -> dict:
     if not body.source.get("videos"):
         raise HTTPException(status_code=422, detail="source has no videos — resolve it first")
 
@@ -243,7 +198,7 @@ async def api_create_job(body: JobCreateRequest, user: User = Depends(auth.requi
     await store.create_job_record(
         app.state.redis,
         job_id,
-        owner_id=user.id,
+        owner_id=WEB_OWNER_ID,
         title=body.source.get("title", ""),
         kind=body.source.get("kind", "video"),
         total=len(body.source.get("videos", [])),
@@ -252,42 +207,42 @@ async def api_create_job(body: JobCreateRequest, user: User = Depends(auth.requi
         await run_in_threadpool(
             _invoke_worker_lambda,
             "run_download_job",
-            {"job_id": job_id, "source": body.source, "settings": settings.to_dict(), "owner_id": user.id},
+            {"job_id": job_id, "source": body.source, "settings": settings.to_dict(), "owner_id": WEB_OWNER_ID},
         )
     else:
         await app.state.arq_pool.enqueue_job(
-            "run_download_job", job_id, body.source, settings.to_dict(), user.id, _job_id=job_id
+            "run_download_job", job_id, body.source, settings.to_dict(), WEB_OWNER_ID, _job_id=job_id
         )
     return {"job_id": job_id}
 
 
 @app.get("/api/jobs")
-async def api_list_jobs(user: User = Depends(auth.require_user)) -> list[dict]:
-    return await store.list_jobs(app.state.redis, owner_id=user.id)
+async def api_list_jobs() -> list[dict]:
+    return await store.list_jobs(app.state.redis, owner_id=WEB_OWNER_ID)
 
 
-async def _get_owned_job(job_id: str, user: User) -> dict:
+async def _get_owned_job(job_id: str) -> dict:
     job = await store.get_job(app.state.redis, job_id)
-    if job is None or job.get("owner_id") != user.id:
+    if job is None or job.get("owner_id") != WEB_OWNER_ID:
         raise HTTPException(status_code=404, detail="job not found")
     return job
 
 
 @app.get("/api/jobs/{job_id}")
-async def api_get_job(job_id: str, user: User = Depends(auth.require_user)) -> dict:
-    return await _get_owned_job(job_id, user)
+async def api_get_job(job_id: str) -> dict:
+    return await _get_owned_job(job_id)
 
 
 @app.post("/api/jobs/{job_id}/cancel")
-async def api_cancel_job(job_id: str, user: User = Depends(auth.require_user)) -> dict:
-    await _get_owned_job(job_id, user)
+async def api_cancel_job(job_id: str) -> dict:
+    await _get_owned_job(job_id)
     await store.request_cancel(app.state.redis, job_id)
     return {"ok": True}
 
 
 @app.post("/api/jobs/{job_id}/pause")
-async def api_pause_job(job_id: str, user: User = Depends(auth.require_user)) -> dict:
-    job = await _get_owned_job(job_id, user)
+async def api_pause_job(job_id: str) -> dict:
+    job = await _get_owned_job(job_id)
     if job.get("state") != "running":
         raise HTTPException(status_code=409, detail=f"job is {job.get('state')}, not running")
     await store.request_pause(app.state.redis, job_id)
@@ -295,15 +250,15 @@ async def api_pause_job(job_id: str, user: User = Depends(auth.require_user)) ->
 
 
 @app.post("/api/jobs/{job_id}/resume")
-async def api_resume_job(job_id: str, user: User = Depends(auth.require_user)) -> dict:
-    await _get_owned_job(job_id, user)
+async def api_resume_job(job_id: str) -> dict:
+    await _get_owned_job(job_id)
     await store.request_resume(app.state.redis, job_id)
     return {"ok": True}
 
 
 @app.get("/api/jobs/{job_id}/files")
-async def api_job_files(job_id: str, user: User = Depends(auth.require_user)) -> list[dict]:
-    await _get_owned_job(job_id, user)
+async def api_job_files(job_id: str) -> list[dict]:
+    await _get_owned_job(job_id)
     if S3_BUCKET:
         files = await store.get_job_files(app.state.redis, job_id)
         return [{"name": f["name"], "size": f["size"]} for f in files]
@@ -319,8 +274,8 @@ async def api_job_files(job_id: str, user: User = Depends(auth.require_user)) ->
 
 
 @app.get("/api/jobs/{job_id}/files/{file_path:path}")
-async def api_download_file(job_id: str, file_path: str, user: User = Depends(auth.require_user_qs)) -> Response:
-    await _get_owned_job(job_id, user)
+async def api_download_file(job_id: str, file_path: str) -> Response:
+    await _get_owned_job(job_id)
     if S3_BUCKET:
         files = await store.get_job_files(app.state.redis, job_id)
         match = next((f for f in files if f["name"] == file_path), None)
@@ -339,7 +294,7 @@ async def api_download_file(job_id: str, file_path: str, user: User = Depends(au
 
 # -- subscriptions ----------------------------------------------------------
 @app.post("/api/subscriptions")
-async def api_create_subscription(body: SubscriptionCreateRequest, user: User = Depends(auth.require_user)) -> dict:
+async def api_create_subscription(body: SubscriptionCreateRequest) -> dict:
     try:
         source = await run_in_threadpool(resolver.resolve, body.url, extra_opts=pot_extractor_args())
     except resolver.ResolveError as exc:
@@ -349,7 +304,7 @@ async def api_create_subscription(body: SubscriptionCreateRequest, user: User = 
     ids = [v.id for v in source.videos if v.id]
     sub = Subscription(
         id=sub_id,
-        owner_id=user.id,
+        owner_id=WEB_OWNER_ID,
         url=body.url,
         title=source.title,
         kind=source.kind.value,
@@ -358,7 +313,7 @@ async def api_create_subscription(body: SubscriptionCreateRequest, user: User = 
         last_checked=time.time(),
     )
     await store.create_subscription(
-        app.state.redis, sub_id, owner_id=user.id, url=body.url, title=source.title,
+        app.state.redis, sub_id, owner_id=WEB_OWNER_ID, url=body.url, title=source.title,
         kind=source.kind.value, interval_minutes=body.interval_minutes,
     )
     await store.save_subscription(app.state.redis, sub)
@@ -366,28 +321,28 @@ async def api_create_subscription(body: SubscriptionCreateRequest, user: User = 
 
 
 @app.get("/api/subscriptions")
-async def api_list_subscriptions(user: User = Depends(auth.require_user)) -> list[dict]:
-    subs = await store.list_subscriptions(app.state.redis, owner_id=user.id)
+async def api_list_subscriptions() -> list[dict]:
+    subs = await store.list_subscriptions(app.state.redis, owner_id=WEB_OWNER_ID)
     return [dataclasses.asdict(s) for s in subs]
 
 
-async def _get_owned_subscription(sub_id: str, user: User) -> Subscription:
+async def _get_owned_subscription(sub_id: str) -> Subscription:
     sub = await store.get_subscription(app.state.redis, sub_id)
-    if sub is None or sub.owner_id != user.id:
+    if sub is None or sub.owner_id != WEB_OWNER_ID:
         raise HTTPException(status_code=404, detail="subscription not found")
     return sub
 
 
 @app.delete("/api/subscriptions/{sub_id}")
-async def api_delete_subscription(sub_id: str, user: User = Depends(auth.require_user)) -> dict:
-    await _get_owned_subscription(sub_id, user)
+async def api_delete_subscription(sub_id: str) -> dict:
+    await _get_owned_subscription(sub_id)
     await store.delete_subscription(app.state.redis, sub_id)
     return {"ok": True}
 
 
 @app.post("/api/subscriptions/{sub_id}/check")
-async def api_check_subscription(sub_id: str, user: User = Depends(auth.require_user)) -> dict:
-    await _get_owned_subscription(sub_id, user)
+async def api_check_subscription(sub_id: str) -> dict:
+    await _get_owned_subscription(sub_id)
     if IS_LAMBDA:
         await run_in_threadpool(_invoke_worker_lambda, "check_one_subscription", {"sub_id": sub_id})
     else:
@@ -396,12 +351,8 @@ async def api_check_subscription(sub_id: str, user: User = Depends(auth.require_
 
 
 @app.websocket("/ws")
-async def ws_endpoint(ws: WebSocket, token: str | None = Query(default=None)) -> None:
-    user_id = auth.decode_token(token) if token else None
-    if user_id is None:
-        await ws.close(code=4401)
-        return
-    await manager.connect(ws, user_id)
+async def ws_endpoint(ws: WebSocket) -> None:
+    await manager.connect(ws, WEB_OWNER_ID)
     try:
         while True:
             await ws.receive_text()  # client doesn't send anything meaningful; just keep the socket open
@@ -427,4 +378,9 @@ if IS_LAMBDA:
 
         @app.get("/{full_path:path}")
         async def spa_fallback(full_path: str) -> _FileResponse:
+            # Top-level public files (manifest, icons) are served as-is;
+            # everything else falls through to the SPA.
+            candidate = (_STATIC_DIR / full_path).resolve()
+            if full_path and candidate.parent == _STATIC_DIR.resolve() and candidate.is_file():
+                return _FileResponse(candidate)
             return _FileResponse(_STATIC_DIR / "index.html")

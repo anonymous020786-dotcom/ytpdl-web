@@ -3,7 +3,7 @@
 React Native + Expo app for iOS/Android. Same backend as `frontend/` (the
 web app) and `backend/app/bot/` (the Telegram bot) — this adds no new
 server-side logic, it's just another client against the existing FastAPI +
-WebSocket API. Login/register, job resolution, queueing, live progress,
+WebSocket API. Job resolution, queueing, live progress,
 pause/resume/cancel, and subscriptions all hit the exact same endpoints the
 web frontend uses (see `src/api/client.ts`).
 
@@ -33,15 +33,13 @@ already be running and reachable at that address.
 **The API URL doesn't need a rebuild to change.** `EXPO_PUBLIC_API_BASE_URL`
 (here, or in `eas.json`'s `preview.env` for an EAS build) is only the
 *default* baked in at build time — a LAN IP renews on DHCP and goes stale,
-and rebuilding a whole APK just to update one URL is wasteful. The Login
-screen has a "Can't connect? Set server address" link that edits the actual
-value used at runtime (stored in SecureStore), so a stale IP is a 10-second
+and rebuilding a whole APK just to update one URL is wasteful. The Settings
+tab has a server-address field that edits the actual value used at runtime (stored in SecureStore), so a stale IP is a 10-second
 fix in the app, not a ~10-minute EAS rebuild.
 
 ## What's built
 
-- Email/password login & registration (same JWT auth as the web app),
-  token stored in the device Keychain/Keystore via `expo-secure-store`
+- No login — the app opens straight to the downloader tabs
 - Paste a link → resolve → pick audio/video + format/quality → queue
 - Live job list: progress bar, speed/ETA, pause/resume/cancel — fed by the
   same `/ws` WebSocket the web frontend uses, with a 15s poll fallback

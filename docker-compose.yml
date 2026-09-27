@@ -5,27 +5,14 @@ services:
     volumes:
       - redis_data:/data
 
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ytpdl
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
-      POSTGRES_DB: ytpdl
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
   api:
     build:
       context: ./backend
     restart: unless-stopped
     environment:
       REDIS_URL: redis://redis:6379/0
-      DATABASE_URL: postgresql+psycopg://ytpdl:${POSTGRES_PASSWORD}@postgres:5432/ytpdl
       DOWNLOAD_ROOT: /data/downloads
       WORK_ROOT: /data/work
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
-      SIGNUP_INVITE_CODE: ${SIGNUP_INVITE_CODE}
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
       MAX_CONCURRENT_DOWNLOADS: ${MAX_CONCURRENT_DOWNLOADS:-2}
     volumes:
@@ -33,7 +20,6 @@ services:
       - work:/data/work
     depends_on:
       - redis
-      - postgres
 
   worker:
     build:
@@ -42,7 +28,6 @@ services:
     restart: unless-stopped
     environment:
       REDIS_URL: redis://redis:6379/0
-      DATABASE_URL: postgresql+psycopg://ytpdl:${POSTGRES_PASSWORD}@postgres:5432/ytpdl
       DOWNLOAD_ROOT: /data/downloads
       WORK_ROOT: /data/work
       MAX_CONCURRENT_DOWNLOADS: ${MAX_CONCURRENT_DOWNLOADS:-2}
@@ -52,7 +37,6 @@ services:
       - work:/data/work
     depends_on:
       - redis
-      - postgres
 
   telegram-bot-api:
     image: aiogram/telegram-bot-api:latest
@@ -104,7 +88,6 @@ services:
 
 volumes:
   redis_data:
-  postgres_data:
   downloads:
   work:
   telegram_bot_api_data:

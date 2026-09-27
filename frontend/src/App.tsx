@@ -1,41 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { api, clearToken, getToken } from "./api";
+import { useCallback, useEffect, useState } from "react";
+import { api } from "./api";
 import { SubmitForm } from "./components/SubmitForm";
 import { JobList } from "./components/JobList";
 import { Subscriptions } from "./components/Subscriptions";
-import { AuthGate } from "./components/AuthGate";
-import type { JobRecord, User } from "./types";
+import type { JobRecord } from "./types";
 
 export default function App() {
-  const [user, setUser] = useState<User | null>(null);
-  const [checkingSession, setCheckingSession] = useState(true);
   const [jobs, setJobs] = useState<JobRecord[]>([]);
 
-  useEffect(() => {
-    if (!getToken()) {
-      setCheckingSession(false);
-      return;
-    }
-    api
-      .me()
-      .then(setUser)
-      .catch(() => clearToken())
-      .finally(() => setCheckingSession(false));
-  }, []);
-
-  const handleAuthFailure = useCallback((err: unknown) => {
-    if (String((err as Error).message).includes("401")) {
-      clearToken();
-      setUser(null);
-    }
-  }, []);
-
   const refresh = useCallback(() => {
-    api.listJobs().then(setJobs).catch(handleAuthFailure);
-  }, [handleAuthFailure]);
+    api.listJobs().then(setJobs).catch(() => {});
+  }, []);
 
   useEffect(() => {
-    if (!user) return;
     refresh();
 
     const ws = new WebSocket(api.wsUrl());
@@ -60,7 +37,7 @@ export default function App() {
       ws.close();
       clearInterval(poll);
     };
-  }, [user, refresh]);
+  }, [refresh]);
 
   async function handleCancel(jobId: string) {
     await api.cancelJob(jobId);
@@ -74,30 +51,10 @@ export default function App() {
     await api.resumeJob(jobId);
   }
 
-  function handleLogout() {
-    clearToken();
-    setUser(null);
-    setJobs([]);
-  }
-
-  if (checkingSession) {
-    return null;
-  }
-
-  if (!user) {
-    return <AuthGate onAuthed={setUser} />;
-  }
-
   return (
     <div className="app">
-      <header className="app-header">
+      <header>
         <h1>YT Playlist Downloader</h1>
-        <div className="account">
-          <span className="muted">{user.email}</span>
-          <button className="link-btn" onClick={handleLogout}>
-            Log out
-          </button>
-        </div>
       </header>
       <SubmitForm onQueued={refresh} />
       <section>

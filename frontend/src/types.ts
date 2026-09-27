@@ -56,16 +56,6 @@ export interface JobFile {
   size: number;
 }
 
-export interface User {
-  id: string;
-  email: string;
-}
-
-export interface AuthResponse {
-  token: string;
-  user: User;
-}
-
 export interface Subscription {
   id: string;
   url: string;

@@ -13,13 +13,12 @@ logic, callback-based instead of signal-based) and an arq/Redis task queue
 ## Architecture
 
 ```
-frontend/   React + TypeScript (Vite) — accounts, submit a link, watch jobs progress live
-mobile/     React Native + Expo (iOS/Android) — same accounts/API, native app instead of a browser
-backend/    FastAPI (app/main.py) — REST + WebSocket API, per-user accounts (app/auth.py + app/db.py)
+frontend/   React + TypeScript (Vite) — submit a link, watch jobs progress live
+mobile/     React Native + Expo (iOS/Android) — same API, native app instead of a browser
+backend/    FastAPI (app/main.py) — REST + WebSocket API, no accounts/login
             arq worker (app/worker.py) — runs one DownloadRunner per job, checks subscriptions on a cron
             Telegram bot (app/bot/) — same download engine, chat-based UI instead of a browser
             Redis — job queue + job/subscription state + pub/sub for live progress
-            SQLite (dev) / Postgres (docker-compose) — user accounts (web app only)
 Caddy       reverse proxy + static file server + auto-HTTPS (production only)
 ```
 
@@ -27,23 +26,18 @@ The bot and the mobile app are both second/third *frontends* onto the exact
 same backend — the bot enqueues onto the same arq queue (`run_download_job`
 in `worker.py`, unmodified) and listens to the same `job-events` Redis
 channel the web app's WebSocket bridge uses; the mobile app calls the exact
-same REST + WebSocket endpoints the web frontend does, with the same
-email/password JWT accounts. A Telegram user's identity is just their chat
-id (`owner_id = "tg:<chat_id>"`) — no separate login, same as any other
-Telegram bot. See `backend/app/bot/README.md` and `mobile/README.md` for
+same REST + WebSocket endpoints the web frontend does. There are no accounts:
+everything created through the API (web or mobile) belongs to one shared
+owner (`WEB_OWNER_ID = "web"` in `main.py`). A Telegram user's identity is
+just their chat id (`owner_id = "tg:<chat_id>"`), so bot jobs stay separate
+from the web/mobile job list. See `backend/app/bot/README.md` and `mobile/README.md` for
 client-specific setup.
 
 Progress flow: a worker thread running yt-dlp calls a plain Python callback
-on every hook → that publishes to a Redis channel (tagged with the owning
-user's id) → the FastAPI process (subscribed to that channel) fans it out to
-that user's connected WebSocket client(s) only. This is why jobs survive an
-API process restart, why multiple tabs for the same account see the same
-progress, and why users can't see each other's downloads.
-
-Every job and subscription is owned by whoever created it — enforced on
-every read (list/get/cancel/pause/resume/file-download), not just at
-creation. See `backend/app/auth.py`, and `_get_owned_job`/
-`_get_owned_subscription` in `backend/app/main.py`.
+on every hook → that publishes to a Redis channel (tagged with the job's
+owner id) → the FastAPI process (subscribed to that channel) fans it out to
+connected WebSocket client(s) for that owner. This is why jobs survive an
+API process restart and why multiple tabs see the same progress.
 
 ## Where files end up
 
@@ -63,6 +57,14 @@ The server copy under `data/downloads/` stays put after that — nothing
 deletes it automatically yet (see the `JOB_TTL_HOURS` note in `config.py`;
 it's currently metadata-only, not enforced by a cleanup job).
 
+## Installing on a phone without an app store
+
+The web frontend is an installable web app (`frontend/public/manifest.webmanifest`
++ Apple touch icon), so it works on iPhone without an Apple Developer account:
+open the site in **Safari → Share → Add to Home Screen**. It gets its own icon
+and launches full-screen. On Android, use Chrome's **Install app** menu item,
+or install the APK built from `mobile/` (see `mobile/README.md`).
+
 ## Running locally (no Docker)
 
 Backend:
@@ -75,9 +77,6 @@ pip install -r requirements.txt
 set REDIS_URL=redis://localhost:6379/0
 uvicorn app.main:app --reload --port 8000
 ```
-
-No `DATABASE_URL` needed for local dev — it defaults to a SQLite file
-(`backend/ytpdl.db`) created automatically on first startup.
 
 Worker (separate terminal, same venv/env):
 
@@ -93,36 +92,28 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173 and sign up — `SIGNUP_INVITE_CODE` is unset by
-default so registration is open, fine on localhost, never once this is
-reachable from anywhere else.
+Open http://localhost:5173 — there's no login; the app opens straight to
+the downloader.
 
 ## Running with Docker Compose
 
 ```bash
-cp .env.example .env   # set real JWT_SECRET and POSTGRES_PASSWORD, and SIGNUP_INVITE_CODE
+cp .env.example .env
 docker compose up --build
 ```
 
-This brings up Postgres (accounts) + Redis (jobs/subscriptions/queue) instead
-of SQLite. Caddy listens on :80/:443, serves the built frontend, and proxies
+This brings up Redis (jobs/subscriptions/queue), the API, the worker and the
+Telegram bot. Caddy listens on :80/:443, serves the built frontend, and proxies
 `/api` and `/ws` to the API container. Set `SITE_ADDRESS` in `.env` to a real
 domain to get automatic HTTPS from Caddy; leave it as `localhost` for local
 testing.
 
 ## Follow-ups not in this scaffold
 
-- **Password reset / email verification**: registration only checks the
-  email isn't already taken — there's no "confirm your email" or "forgot
-  password" flow. Fine for a small trusted instance, not for public signup.
-- **Long-lived JWTs, no revocation**: tokens are valid for `JWT_TTL_SECONDS`
-  (30 days) with no server-side revocation list — logging out just deletes
-  the token client-side. Add refresh tokens + a revocation/blacklist store if
-  "log out everywhere" or shorter-lived sessions matter to you.
 - **Job listing at scale**: `store.list_jobs` fetches the most recent
-  `limit` jobs *across all users* from a single Redis zset, then filters to
+  `limit` jobs *across all owners* from a single Redis zset, then filters to
   the caller — fine at scaffold scale, but a very active instance should
-  move job history into Postgres with a per-user index (the README's
+  move job history into a database with a per-owner index (the README's
   original note about Redis being TTL'd/ephemeral by design still applies).
 - **i18n**: the desktop app's 14 translated locales weren't ported to the
   frontend.
@@ -130,10 +121,9 @@ testing.
   For a public-facing deployment with real traffic, prefer S3-compatible
   object storage (Cloudflare R2 / Backblaze B2) with signed URLs and a
   TTL-based cleanup job, so the app server's disk doesn't fill up.
-- **Rate limiting**: nothing throttles `/api/auth/register` or `/api/auth/login`
-  — add rate limiting before those are internet-facing, or they're an easy
-  brute-force/signup-spam target.
-- **Legal**: YouTube's ToS prohibits downloading. `SIGNUP_INVITE_CODE` keeps
-  this from becoming an open public downloader the moment it's reachable
-  from the internet — set it (see `.env.example`) before deploying anywhere
-  but a fully trusted private instance.
+- **No access control**: there's no login, so anyone who can reach the
+  server can queue downloads and fetch every finished file. Keep it on
+  localhost/LAN, or put it behind something that restricts access (VPN,
+  Cloudflare Access, Caddy `basic_auth`) before exposing it to the
+  internet. YouTube's ToS also prohibits downloading, so don't run it as an
+  open public service.
